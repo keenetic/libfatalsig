@@ -12,11 +12,16 @@
 #define FATALSIG_UNWIND_NAME_MAX_				256
 
 static void
-fatalsig_backtrace(void)
+fatalsig_action(int signo, siginfo_t *info, void *ctx)
 {
+	struct sigaction sa;
 	unw_cursor_t cursor;
 	unw_context_t uc;
 	int ret = 0;
+
+	syslog(LOG_ERR, "program caught a fatal signal: %s (%d)",
+		strsignal(signo) != NULL ? strsignal(signo) : "Unknown",
+		signo);
 
 	unw_flush_cache(unw_local_addr_space, 0, 0);
 
@@ -24,14 +29,27 @@ fatalsig_backtrace(void)
 		syslog(LOG_ERR,
 			"unable to get a stack unwind context: %s",
 			unw_strerror(ret));
-		return;
+
+		goto propagate_signal;
 	}
 
 	if ((ret = unw_init_local(&cursor, &uc)) != 0) {
 		syslog(LOG_ERR,
 			"stack unwind initialization failed: %s",
 			unw_strerror(ret));
-		return;
+
+		goto propagate_signal;
+	}
+
+	/* skip this function frame */
+	if ((ret = unw_step(&cursor)) < 0) {
+		syslog(LOG_ERR,
+			"failed to skip a signal handler stack frame: %s",
+			unw_strerror(ret));
+	}
+
+	if (ret <= 0) {
+		goto propagate_signal;
 	}
 
 	while ((ret = unw_step(&cursor)) > 0) {
@@ -53,18 +71,8 @@ fatalsig_backtrace(void)
 	if (ret < 0) {
 		syslog(LOG_ERR, "stack unwind step failed: %s", unw_strerror(ret));
 	}
-}
 
-static void
-fatalsig_action(int signo, siginfo_t *info, void *ctx)
-{
-	struct sigaction sa;
-
-	syslog(LOG_ERR, "program caught a fatal signal: %s (%d)",
-		strsignal(signo) != NULL ? strsignal(signo) : "Unknown",
-		signo);
-
-	fatalsig_backtrace();
+propagate_signal:
 
 	memset(&sa, 0, sizeof(sa));
 	sa.sa_handler = SIG_DFL;
