@@ -11,10 +11,8 @@
 
 #define FATALSIG_UNWIND_NAME_MAX_				256
 
-static void
-fatalsig_action(int signo, siginfo_t *info, void *ctx)
+void fatalsig_stacktrace(int signo)
 {
-	struct sigaction sa;
 	unw_cursor_t cursor;
 	unw_context_t uc;
 	int ret = 0;
@@ -30,7 +28,7 @@ fatalsig_action(int signo, siginfo_t *info, void *ctx)
 			"unable to get a stack unwind context: %s",
 			unw_strerror(ret));
 
-		goto propagate_signal;
+		return;
 	}
 
 	if ((ret = unw_init_local(&cursor, &uc)) != 0) {
@@ -38,7 +36,7 @@ fatalsig_action(int signo, siginfo_t *info, void *ctx)
 			"stack unwind initialization failed: %s",
 			unw_strerror(ret));
 
-		goto propagate_signal;
+		return;
 	}
 
 	/* skip this function frame */
@@ -49,7 +47,7 @@ fatalsig_action(int signo, siginfo_t *info, void *ctx)
 	}
 
 	if (ret <= 0) {
-		goto propagate_signal;
+		return;
 	}
 
 	while ((ret = unw_step(&cursor)) > 0) {
@@ -71,8 +69,14 @@ fatalsig_action(int signo, siginfo_t *info, void *ctx)
 	if (ret < 0) {
 		syslog(LOG_ERR, "stack unwind step failed: %s", unw_strerror(ret));
 	}
+}
 
-propagate_signal:
+static void
+fatalsig_action(int signo, siginfo_t *info, void *ctx)
+{
+	struct sigaction sa;
+
+	fatalsig_stacktrace(signo);
 
 	memset(&sa, 0, sizeof(sa));
 	sa.sa_handler = SIG_DFL;
@@ -107,4 +111,3 @@ int fatalsig_init(void)
 
 	return 0;
 }
-
